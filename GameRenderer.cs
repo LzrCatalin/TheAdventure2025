@@ -79,11 +79,12 @@ public unsafe class GameRenderer
     }
 
     public void RenderTexture(int textureId, Rectangle<int> src, Rectangle<int> dst,
-        RendererFlip flip = RendererFlip.None, double angle = 0.0, Point center = default)
+        RendererFlip flip = RendererFlip.None, double angle = 0.0, Point center = default, bool useCamera = true)
     {
         if (_texturePointers.TryGetValue(textureId, out var imageTexture))
         {
-            var translatedDst = _camera.ToScreenCoordinates(dst);
+            var translatedDst = useCamera ? _camera.ToScreenCoordinates(dst) : dst;
+
             _sdl.RenderCopyEx(_renderer, (Texture*)imageTexture, in src,
                 in translatedDst,
                 angle,
@@ -109,5 +110,17 @@ public unsafe class GameRenderer
     public void PresentFrame()
     {
         _sdl.RenderPresent(_renderer);
+    }
+    
+    public void RenderRect(int x, int y, int width, int height, bool useCamera = true)
+    {
+        var rect = new Rectangle<int>(x, y, width, height);
+
+        if (useCamera)
+        {
+            rect = _camera.ToScreenCoordinates(rect);
+        }
+
+        _sdl.RenderFillRect(_renderer, in rect);
     }
 }

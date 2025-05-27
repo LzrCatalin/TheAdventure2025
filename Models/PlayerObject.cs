@@ -5,6 +5,8 @@ namespace TheAdventure.Models;
 public class PlayerObject : RenderableGameObject
 {
     private const int _speed = 128; // pixels per second
+    public int Lives { get; private set; } = 3; // 3 lives at the start
+    public int Score { get; private set; } = 0; // score at the start
 
     public enum PlayerStateDirection
     {
@@ -145,5 +147,33 @@ public class PlayerObject : RenderableGameObject
         }
 
         Position = (x, y);
+    }
+
+    public void AddScore(int points)
+    {
+        if (State.State != PlayerState.GameOver)
+        {
+            Score += points;
+        }
+    }
+
+    public void LoseLife()
+    {
+        if (State.State == PlayerState.GameOver)
+        {
+            return;
+        }
+        
+        Lives--;
+        if (Lives <= 0)
+        {
+            GameOver();
+        }
+    }
+
+    public void ResetStats()
+    {
+        Lives = 3;
+        Score = 0;
     }
 }

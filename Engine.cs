@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using Silk.NET.Maths;
+using Silk.NET.SDL;
 using TheAdventure.Models;
 using TheAdventure.Models.Data;
 using TheAdventure.Scripting;
@@ -21,7 +22,13 @@ public class Engine
     private PlayerObject? _player;
 
     private DateTimeOffset _lastUpdate = DateTimeOffset.Now;
-
+    
+    private int _heartTextureId;
+    private TextureData _heartTextureData;
+    
+    public int GetPlayerLives() => _player?.Lives ?? 0;
+    public int GetPlayerScore() => _player?.Score ?? 0;
+    
     public Engine(GameRenderer renderer, Input input)
     {
         _renderer = renderer;
@@ -33,7 +40,12 @@ public class Engine
     public void SetupWorld()
     {
         _player = new(SpriteSheet.Load(_renderer, "Player.json", "Assets"), 100, 100);
+        _player.ResetStats(); // reset stats at the beginning
+        
+        // Load heart design
+        _heartTextureId = _renderer.LoadTexture(Path.Combine("Assets", "Images", "heart-icon.jpg"), out _heartTextureData);
 
+        
         var levelContent = File.ReadAllText(Path.Combine("Assets", "terrain.tmj"));
         var level = JsonSerializer.Deserialize<Level>(levelContent);
         if (level == null)
@@ -108,7 +120,51 @@ public class Engine
             AddBomb(_player.Position.X, _player.Position.Y, false);
         }
     }
+    
+    private void RenderHud()
+    {
+        int heartSize = 24;
+        int heartSpacing = 6;
+        int hudMargin = 10;
 
+        int scoreBarMaxWidth = 200;
+        int scoreBarHeight = 16;
+
+        // Draw hearts
+        for (int i = 0; i < _player.Lives; i++)
+        {
+            var drawRect = new Rectangle<int>(
+                hudMargin + i * (heartSize + heartSpacing),
+                hudMargin,
+                heartSize,
+                heartSize
+            );
+
+            _renderer.RenderTexture(
+                _heartTextureId,
+                new Rectangle<int>(0, 0, _heartTextureData.Width, _heartTextureData.Height),
+                drawRect,
+                RendererFlip.None,
+                0.0,
+                default,
+                false 
+            );
+        }
+
+        // Score bar drawing
+        int scoreY = hudMargin + heartSize + 10;
+        int currentScoreWidth = Math.Min(_player.Score, scoreBarMaxWidth);
+
+        // Score bar background gray
+        _renderer.SetDrawColor(60, 60, 60, 220);
+        _renderer.RenderRect(hudMargin - 2, scoreY - 2, scoreBarMaxWidth + 4, scoreBarHeight + 4, false);
+
+        // Fill of the score bar with yellow
+        _renderer.SetDrawColor(255, 215, 0, 255);
+        _renderer.RenderRect(hudMargin, scoreY, currentScoreWidth, scoreBarHeight, false);
+    }
+
+    
     public void RenderFrame()
     {
         _renderer.SetDrawColor(0, 0, 0, 255);
@@ -119,6 +175,8 @@ public class Engine
 
         RenderTerrain();
         RenderAllObjects();
+        
+        RenderHud();
 
         _renderer.PresentFrame();
     }
@@ -147,15 +205,20 @@ public class Engine
             var tempGameObject = (TemporaryGameObject)gameObject!;
             var deltaX = Math.Abs(_player.Position.X - tempGameObject.Position.X);
             var deltaY = Math.Abs(_player.Position.Y - tempGameObject.Position.Y);
+            // If the player doesnt die, the score will increase, else, game over
             if (deltaX < 32 && deltaY < 32)
             {
-                _player.GameOver();
+                _player.LoseLife();
+            }
+            else
+            {
+                _player.AddScore(10); // add 10 for each missed bomb
             }
         }
 
         _player?.Render(_renderer);
     }
-
+    
     public void RenderTerrain()
     {
         foreach (var currentLayer in _currentLevel.Layers)
