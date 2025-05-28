@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.Text.Json;
 using Silk.NET.Maths;
 using Silk.NET.SDL;
@@ -26,6 +27,8 @@ public class Engine
     private int _heartTextureId;
     private TextureData _heartTextureData;
     
+    private Process? _backgroundMusicProcess;
+    
     public int GetPlayerLives() => _player?.Lives ?? 0;
     public int GetPlayerScore() => _player?.Score ?? 0;
     
@@ -35,6 +38,17 @@ public class Engine
         _input = input;
 
         _input.OnMouseClick += (_, coords) => AddBomb(coords.x, coords.y);
+
+        // Play background music
+        _backgroundMusicProcess = Process.Start(new ProcessStartInfo
+        {
+            FileName = "ffplay",
+            Arguments = "-nodisp -autoexit -loop 0 Assets/Audio/background-music.wav",
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        });
     }
 
     public void SetupWorld()
@@ -91,6 +105,9 @@ public class Engine
 
     public void ProcessFrame()
     {
+        if (_player == null || _player?.State.State == PlayerObject.PlayerState.GameOver)
+            return;
+        
         var currentTime = DateTimeOffset.Now;
         var msSinceLastFrame = (currentTime - _lastUpdate).TotalMilliseconds;
         _lastUpdate = currentTime;
@@ -209,10 +226,45 @@ public class Engine
             if (deltaX < 32 && deltaY < 32)
             {
                 _player.LoseLife();
+
+                // Play explosion
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "ffplay",
+                    Arguments = "-nodisp -autoexit Assets/Audio/bomb-explosion.wav",
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                });
+
+                if (_player.Lives <= 0)
+                {
+                    // Stop background music
+                    _backgroundMusicProcess?.Kill();
+                    _backgroundMusicProcess?.Dispose();
+                    _backgroundMusicProcess = null;
+
+                    // Play game over sound
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "ffplay",
+                        Arguments = "-nodisp -autoexit Assets/Audio/game-over-sound.wav",
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    });
+                }
             }
             else
             {
-                _player.AddScore(10); // add 10 for each missed bomb
+                _player.AddScore(10);
+
+                // Play score gain
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "ffplay",
+                    Arguments = "-nodisp -autoexit Assets/Audio/score-up-sound.wav",
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                });
             }
         }
 
@@ -270,11 +322,14 @@ public class Engine
 
     public void AddBomb(int X, int Y, bool translateCoordinates = true)
     {
+        if (_player?.State.State == PlayerObject.PlayerState.GameOver)
+            return;
+        
         var worldCoords = translateCoordinates ? _renderer.ToWorldCoordinates(X, Y) : new Vector2D<int>(X, Y);
 
         SpriteSheet spriteSheet = SpriteSheet.Load(_renderer, "BombExploding.json", "Assets");
         spriteSheet.ActivateAnimation("Explode");
-
+        
         TemporaryGameObject bomb = new(spriteSheet, 2.1, (worldCoords.X, worldCoords.Y));
         _gameObjects.Add(bomb.Id, bomb);
     }

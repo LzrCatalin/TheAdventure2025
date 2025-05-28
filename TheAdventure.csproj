@@ -27,4 +27,8 @@
       <ClCompile Include="Assets\Scripts\RandomBomb.script.cs" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="Assets\Audio\" />
+    </ItemGroup>
+
 </Project>
