@@ -21,8 +21,14 @@ public class Engine
 
     private Level _currentLevel = new();
     private PlayerObject? _player;
+    private bool _isGameOver = false;
 
     private DateTimeOffset _lastUpdate = DateTimeOffset.Now;
+    private DateTimeOffset _nextPowerUpSpawn = DateTimeOffset.Now.AddSeconds(8);
+    private DateTimeOffset _nextEnemySpawn = DateTimeOffset.Now.AddSeconds(12);
+    private Random _rng = new();
+    
+    private List<EnemyObject> _enemies = new();
     
     private int _heartTextureId;
     private TextureData _heartTextureData;
@@ -56,9 +62,24 @@ public class Engine
         _player = new(SpriteSheet.Load(_renderer, "Player.json", "Assets"), 100, 100);
         _player.ResetStats(); // reset stats at the beginning
         
+        // Load power-up textures
+        var heartSprite = SpriteSheet.Load(_renderer, "HeartPowerUp.json", "Assets");
+        var coinSprite = SpriteSheet.Load(_renderer, "CoinPowerUp.json", "Assets");
+
+        // Create and add power-ups
+        var heart = new HeartPowerUp(heartSprite, (200, 200));
+        var coin = new CoinPowerUp(coinSprite, (140, 100));
+        _gameObjects.Add(heart.Id, heart);
+        _gameObjects.Add(coin.Id, coin);
+
         // Load heart design
         _heartTextureId = _renderer.LoadTexture(Path.Combine("Assets", "Images", "heart-icon.jpg"), out _heartTextureData);
 
+        // Enemies
+        var enemySprite = SpriteSheet.Load(_renderer, "Enemy.json", "Assets");
+        var enemy = new EnemyObject(enemySprite, (400, 400));
+        _enemies.Add(enemy);
+        _gameObjects.Add(enemy.Id, enemy);
         
         var levelContent = File.ReadAllText(Path.Combine("Assets", "terrain.tmj"));
         var level = JsonSerializer.Deserialize<Level>(levelContent);
@@ -105,17 +126,24 @@ public class Engine
 
     public void ProcessFrame()
     {
+        if (_isGameOver)
+        {
+            if (_input.IsKeyRPressed())
+            {
+                _gameObjects.Clear();
+                _enemies.Clear();
+                _isGameOver = false;
+                SetupWorld();
+            }
+            return;
+        }
+
         if (_player == null || _player?.State.State == PlayerObject.PlayerState.GameOver)
             return;
-        
+
         var currentTime = DateTimeOffset.Now;
         var msSinceLastFrame = (currentTime - _lastUpdate).TotalMilliseconds;
         _lastUpdate = currentTime;
-
-        if (_player == null)
-        {
-            return;
-        }
 
         double up = _input.IsUpPressed() ? 1.0 : 0.0;
         double down = _input.IsDownPressed() ? 1.0 : 0.0;
@@ -130,12 +158,30 @@ public class Engine
             _player.Attack();
         }
         
+        foreach (var enemy in _enemies)
+        {
+            enemy.Update(msSinceLastFrame, _player.Position);
+        }
+
         _scriptEngine.ExecuteAll(this);
 
         if (addBomb)
         {
             AddBomb(_player.Position.X, _player.Position.Y, false);
         }
+
+        if (DateTimeOffset.Now >= _nextPowerUpSpawn)
+        {
+            AddRandomPowerUp();
+            _nextPowerUpSpawn = DateTimeOffset.Now.AddSeconds(8);
+        }
+        
+        if (DateTimeOffset.Now >= _nextEnemySpawn)
+        {
+            AddRandomEnemy();
+            _nextEnemySpawn = DateTimeOffset.Now.AddSeconds(12);
+        }
+
     }
     
     private void RenderHud()
@@ -194,6 +240,15 @@ public class Engine
         RenderAllObjects();
         
         RenderHud();
+        
+        if (_isGameOver)
+        {
+            _renderer.SetDrawColor(0, 0, 0, 180);
+            _renderer.RenderRect(0, 0, _renderer.Width, _renderer.Height, true); 
+
+            _renderer.RenderText("GAME OVER", _renderer.Width / 2 - 80, _renderer.Height / 2 - 20, 32);
+            _renderer.RenderText("Press R to Restart", _renderer.Width / 2 - 100, _renderer.Height / 2 + 20, 20);
+        }
 
         _renderer.PresentFrame();
     }
@@ -222,12 +277,10 @@ public class Engine
             var tempGameObject = (TemporaryGameObject)gameObject!;
             var deltaX = Math.Abs(_player.Position.X - tempGameObject.Position.X);
             var deltaY = Math.Abs(_player.Position.Y - tempGameObject.Position.Y);
-            // If the player doesnt die, the score will increase, else, game over
             if (deltaX < 32 && deltaY < 32)
             {
                 _player.LoseLife();
 
-                // Play explosion
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = "ffplay",
@@ -238,12 +291,10 @@ public class Engine
 
                 if (_player.Lives <= 0)
                 {
-                    // Stop background music
                     _backgroundMusicProcess?.Kill();
                     _backgroundMusicProcess?.Dispose();
                     _backgroundMusicProcess = null;
 
-                    // Play game over sound
                     Process.Start(new ProcessStartInfo
                     {
                         FileName = "ffplay",
@@ -251,13 +302,14 @@ public class Engine
                         CreateNoWindow = true,
                         UseShellExecute = false
                     });
+                    
+                    _isGameOver = true;
                 }
             }
             else
             {
                 _player.AddScore(10);
 
-                // Play score gain
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = "ffplay",
@@ -265,6 +317,58 @@ public class Engine
                     CreateNoWindow = true,
                     UseShellExecute = false
                 });
+            }
+        }
+
+        var toApply = new List<int>();
+        foreach (var obj in _gameObjects)
+        {
+            if (obj.Value is PowerUpObject powerUp)
+            {
+                var dx = Math.Abs(_player.Position.X - powerUp.Position.X);
+                var dy = Math.Abs(_player.Position.Y - powerUp.Position.Y);
+                if (dx < 32 && dy < 32)
+                {
+                    powerUp.Apply(_player);
+                    toApply.Add(obj.Key);
+                }
+            }
+        }
+
+        foreach (var id in toApply)
+        {
+            _gameObjects.Remove(id);
+        }
+        
+        foreach (var enemy in _enemies)
+        {
+            var dx = Math.Abs(_player.Position.X - enemy.Position.X);
+            var dy = Math.Abs(_player.Position.Y - enemy.Position.Y);
+            if (dx < 16 && dy < 16)
+            {
+                _player.LoseLife();
+            }
+        }
+        
+        if (_player.IsAttacking)
+        {
+            var enemiesToRemove = new List<EnemyObject>();
+            foreach (var enemy in _enemies)
+            {
+                var dx = Math.Abs(_player.Position.X - enemy.Position.X);
+                var dy = Math.Abs(_player.Position.Y - enemy.Position.Y);
+                if (dx < 32 && dy < 32)
+                {
+                    enemiesToRemove.Add(enemy);
+                }
+            }
+
+            foreach (var enemy in enemiesToRemove)
+            {
+                _enemies.Remove(enemy);
+                _gameObjects.Remove(enemy.Id);
+
+                _player.AddScore(20); // bonus kill score
             }
         }
 
@@ -332,5 +436,56 @@ public class Engine
         
         TemporaryGameObject bomb = new(spriteSheet, 2.1, (worldCoords.X, worldCoords.Y));
         _gameObjects.Add(bomb.Id, bomb);
+    }
+    
+    
+    private void AddRandomPowerUp()
+    {
+        if (_currentLevel == null || _currentLevel.Width == null || _currentLevel.Height == null)
+            return;
+
+        var tileWidth = _currentLevel.TileWidth ?? 32;
+        var tileHeight = _currentLevel.TileHeight ?? 32;
+
+        int x = _rng.Next(0, _currentLevel.Width.Value * tileWidth);
+        int y = _rng.Next(0, _currentLevel.Height.Value * tileHeight);
+
+        var type = _rng.Next(2); // 0 = coin, 1 = heart
+
+        SpriteSheet spriteSheet;
+        PowerUpObject powerUp;
+
+        if (type == 0)
+        {
+            spriteSheet = SpriteSheet.Load(_renderer, "CoinPowerUp.json", "Assets");
+            powerUp = new CoinPowerUp(spriteSheet, (x, y));
+        }
+        else
+        {
+            spriteSheet = SpriteSheet.Load(_renderer, "HeartPowerUp.json", "Assets");
+            powerUp = new HeartPowerUp(spriteSheet, (x, y));
+        }
+
+        _gameObjects.Add(powerUp.Id, powerUp);
+    }
+    
+    private void AddRandomEnemy()
+    {
+        if (_enemies.Count >= 10)
+            return;
+        
+        if (_currentLevel == null || _currentLevel.Width == null || _currentLevel.Height == null)
+            return;
+
+        var tileWidth = _currentLevel.TileWidth ?? 32;
+        var tileHeight = _currentLevel.TileHeight ?? 32;
+
+        int x = _rng.Next(0, _currentLevel.Width.Value * tileWidth);
+        int y = _rng.Next(0, _currentLevel.Height.Value * tileHeight);
+
+        var spriteSheet = SpriteSheet.Load(_renderer, "Enemy.json", "Assets");
+        var enemy = new EnemyObject(spriteSheet, (x, y));
+        _enemies.Add(enemy);
+        _gameObjects.Add(enemy.Id, enemy);
     }
 }

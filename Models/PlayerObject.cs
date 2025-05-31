@@ -8,6 +8,10 @@ public class PlayerObject : RenderableGameObject
     public int Lives { get; private set; } = 3; // 3 lives at the start
     public int Score { get; private set; } = 0; // score at the start
 
+    public bool IsAttacking { get; private set; }
+    private double _attackDurationMs = 300;
+    private double _attackTimer = 0;
+
     public enum PlayerStateDirection
     {
         None = 0,
@@ -54,7 +58,6 @@ public class PlayerObject : RenderableGameObject
         {
             SpriteSheet.ActivateAnimation(null);
         }
-
         else if (state == PlayerState.GameOver)
         {
             SpriteSheet.ActivateAnimation(Enum.GetName(state));
@@ -82,6 +85,8 @@ public class PlayerObject : RenderableGameObject
 
         var direction = State.Direction;
         SetState(PlayerState.Attack, direction);
+        IsAttacking = true;
+        _attackTimer = _attackDurationMs;
     }
 
     public void UpdatePosition(double up, double down, double left, double right, int width, int height, double time)
@@ -89,6 +94,15 @@ public class PlayerObject : RenderableGameObject
         if (State.State == PlayerState.GameOver)
         {
             return;
+        }
+
+        if (IsAttacking)
+        {
+            _attackTimer -= time;
+            if (_attackTimer <= 0)
+            {
+                IsAttacking = false;
+            }
         }
 
         var pixelsToMove = _speed * (time / 1000.0);
@@ -119,7 +133,7 @@ public class PlayerObject : RenderableGameObject
         else
         {
             newState = PlayerState.Move;
-            
+
             if (y < Position.Y && newDirection != PlayerStateDirection.Up)
             {
                 newDirection = PlayerStateDirection.Up;
@@ -163,11 +177,19 @@ public class PlayerObject : RenderableGameObject
         {
             return;
         }
-        
+
         Lives--;
         if (Lives <= 0)
         {
             GameOver();
+        }
+    }
+
+    public void SetLives(int value)
+    {
+        if (State.State != PlayerState.GameOver)
+        {
+            Lives = value;
         }
     }
 
